@@ -9,15 +9,16 @@ import errno
 import mimetypes
 import getpass
 from io import BytesIO
-from collections import namedtuple, Iterable
+from collections import namedtuple, Iterable, OrderedDict
 # noinspection PyCompatibility
 from argparse import ArgumentParser, ArgumentTypeError, ArgumentError
 
 # TODO: Use MultiDict for headers once added to `requests`.
-# https://github.com/jkbrzt/httpie/issues/130
+# https://github.com/jakubroztocil/httpie/issues/130
+from httpie.plugins import plugin_manager
 from requests.structures import CaseInsensitiveDict
 
-from httpie.compat import OrderedDict, urlsplit, str, is_pypy, is_py27
+from httpie.compat import urlsplit, str, is_pypy, is_py27
 from httpie.sessions import VALID_SESSION_NAME_PATTERN
 from httpie.utils import load_json_preserve_order
 
@@ -28,12 +29,11 @@ URL_SCHEME_RE = re.compile(r'^[a-z][a-z0-9.+-]*://', re.IGNORECASE)
 
 HTTP_POST = 'POST'
 HTTP_GET = 'GET'
-HTTP = 'http://'
-HTTPS = 'https://'
 
 
 # Various separators used in args
 SEP_HEADERS = ':'
+SEP_HEADERS_EMPTY = ';'
 SEP_CREDENTIALS = ':'
 SEP_PROXY = ':'
 SEP_DATA = '='
@@ -67,6 +67,7 @@ SEP_GROUP_RAW_JSON_ITEMS = frozenset([
 # Separators allowed in ITEM arguments
 SEP_GROUP_ALL_ITEMS = frozenset([
     SEP_HEADERS,
+    SEP_HEADERS_EMPTY,
     SEP_QUERY,
     SEP_DATA,
     SEP_DATA_RAW_JSON,
@@ -111,11 +112,11 @@ SSL_VERSION_ARG_MAPPING = {
     'tls1.1': 'PROTOCOL_TLSv1_1',
     'tls1.2': 'PROTOCOL_TLSv1_2',
 }
-SSL_VERSION_ARG_MAPPING = dict(
-    (cli_arg, getattr(ssl, ssl_constant))
+SSL_VERSION_ARG_MAPPING = {
+    cli_arg: getattr(ssl, ssl_constant)
     for cli_arg, ssl_constant in SSL_VERSION_ARG_MAPPING.items()
     if hasattr(ssl, ssl_constant)
-)
+}
 
 
 class HTTPieArgumentParser(ArgumentParser):
@@ -151,7 +152,7 @@ class HTTPieArgumentParser(ArgumentParser):
         if not self.args.ignore_stdin and not env.stdin_isatty:
             self._body_from_file(self.env.stdin)
         if not URL_SCHEME_RE.match(self.args.url):
-            scheme = HTTP
+            scheme = self.args.default_scheme + "://"
 
             # See if we're using curl style shorthand for localhost (:3000/foo)
             shorthand = re.match(r'^:(?!:)(\d*)(/?.*)$', self.args.url)
@@ -214,31 +215,58 @@ class HTTPieArgumentParser(ArgumentParser):
             self.env.stdout_isatty = False
 
     def _process_auth(self):
-        """
-        If only a username provided via --auth, then ask for a password.
-        Or, take credentials from the URL, if provided.
-
-        """
+        # TODO: refactor
+        self.args.auth_plugin = None
+        default_auth_plugin = plugin_manager.get_auth_plugins()[0]
+        auth_type_set = self.args.auth_type is not None
         url = urlsplit(self.args.url)
 
-        if self.args.auth:
-            if not self.args.auth.has_password():
-                # Stdin already read (if not a tty) so it's save to prompt.
-                if self.args.ignore_stdin:
-                    self.error('Unable to prompt for passwords because'
-                               ' --ignore-stdin is set.')
-                self.args.auth.prompt_password(url.netloc)
+        if self.args.auth is None and not auth_type_set:
+            if url.username is not None:
+                # Handle http://username:password@hostname/
+                username = url.username
+                password = url.password or ''
+                self.args.auth = AuthCredentials(
+                    key=username,
+                    value=password,
+                    sep=SEP_CREDENTIALS,
+                    orig=SEP_CREDENTIALS.join([username, password])
+                )
 
-        elif url.username is not None:
-            # Handle http://username:password@hostname/
-            username = url.username
-            password = url.password or ''
-            self.args.auth = AuthCredentials(
-                key=username,
-                value=password,
-                sep=SEP_CREDENTIALS,
-                orig=SEP_CREDENTIALS.join([username, password])
-            )
+        if self.args.auth is not None or auth_type_set:
+            if not self.args.auth_type:
+                self.args.auth_type = default_auth_plugin.auth_type
+            plugin = plugin_manager.get_auth_plugin(self.args.auth_type)()
+
+            if plugin.auth_require and self.args.auth is None:
+                self.error('--auth required')
+
+            plugin.raw_auth = self.args.auth
+            self.args.auth_plugin = plugin
+            already_parsed = isinstance(self.args.auth, AuthCredentials)
+
+            if self.args.auth is None or not plugin.auth_parse:
+                self.args.auth = plugin.get_auth()
+            else:
+                if already_parsed:
+                    # from the URL
+                    credentials = self.args.auth
+                else:
+                    credentials = parse_auth(self.args.auth)
+
+                if (not credentials.has_password() and
+                        plugin.prompt_password):
+                    if self.args.ignore_stdin:
+                        # Non-tty stdin read by now
+                        self.error(
+                            'Unable to prompt for passwords because'
+                            ' --ignore-stdin is set.'
+                        )
+                    credentials.prompt_password(url.netloc)
+                self.args.auth = plugin.get_auth(
+                    username=credentials.key,
+                    password=credentials.value,
+                )
 
     def _apply_no_options(self, no_options):
         """For every `--no-OPTION` in `no_options`, set `args.OPTION` to
@@ -274,7 +302,8 @@ class HTTPieArgumentParser(ArgumentParser):
         """
         if self.args.data:
             self.error('Request body (from stdin or a file) and request '
-                       'data (key=value) cannot be mixed.')
+                       'data (key=value) cannot be mixed. Pass '
+                       '--ignore-stdin to let key/value take priority.')
         self.args.data = getattr(fd, 'buffer', fd).read()
 
     def _guess_method(self):
@@ -309,9 +338,10 @@ class HTTPieArgumentParser(ArgumentParser):
                 self.args.url = self.args.method
                 # Infer the method
                 has_data = (
-                    (not self.args.ignore_stdin and not self.env.stdin_isatty)
-                    or any(item.sep in SEP_GROUP_DATA_ITEMS
-                           for item in self.args.items)
+                    (not self.args.ignore_stdin and
+                     not self.env.stdin_isatty) or
+                    any(item.sep in SEP_GROUP_DATA_ITEMS
+                        for item in self.args.items)
                 )
                 self.args.method = HTTP_POST if has_data else HTTP_GET
 
@@ -380,11 +410,11 @@ class HTTPieArgumentParser(ArgumentParser):
                     else OUTPUT_OPTIONS_DEFAULT_STDOUT_REDIRECTED
                 )
 
-        if self.args.output_options_others is None:
-            self.args.output_options_others = self.args.output_options
+        if self.args.output_options_history is None:
+            self.args.output_options_history = self.args.output_options
 
         check_options(self.args.output_options, '--print')
-        check_options(self.args.output_options_others, '--print-others')
+        check_options(self.args.output_options_history, '--history-print')
 
         if self.args.download and OUT_RESP_BODY in self.args.output_options:
             # Response body is always downloaded with --download and it goes
@@ -439,8 +469,8 @@ class SessionNameValidator(object):
 
     def __call__(self, value):
         # Session name can be a path or just a name.
-        if (os.path.sep not in value
-                and not VALID_SESSION_NAME_PATTERN.search(value)):
+        if (os.path.sep not in value and
+                not VALID_SESSION_NAME_PATTERN.search(value)):
             raise ArgumentError(None, self.error_message)
         return value
 
@@ -577,6 +607,9 @@ class AuthCredentialsArgType(KeyValueArgType):
             )
 
 
+parse_auth = AuthCredentialsArgType(SEP_CREDENTIALS)
+
+
 class RequestItemsDict(OrderedDict):
     """Multi-value dict for URL parameters and form data."""
 
@@ -655,11 +688,20 @@ def parse_items(items,
     data = []
     files = []
     params = []
-
     for item in items:
         value = item.value
-
         if item.sep == SEP_HEADERS:
+            if value == '':
+                # No value => unset the header
+                value = None
+            target = headers
+        elif item.sep == SEP_HEADERS_EMPTY:
+            if item.value:
+                raise ParseError(
+                    'Invalid item "%s" '
+                    '(to specify an empty header use `Header;`)'
+                    % item.orig
+                )
             target = headers
         elif item.sep == SEP_QUERY:
             target = params

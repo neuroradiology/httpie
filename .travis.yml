@@ -1,4 +1,4 @@
-# https://travis-ci.org/jkbrzt/httpie
+# https://travis-ci.org/jakubroztocil/httpie
 sudo: false
 
 language: python
@@ -7,15 +7,17 @@ os:
 
 env:
   global:
-    - NEWEST_PYTHON=3.5
+    - NEWEST_PYTHON=3.6
 
 python:
-  - 2.6
   - 2.7
   - pypy
   - 3.4
   - 3.5
-  - pypy3
+  - 3.6
+# Currently fails because of a Flask issue
+#  - pypy3
+cache: pip
 
 matrix:
 
@@ -41,8 +43,13 @@ matrix:
     - os: osx
       language: generic
       env:
-        - TOXENV=py35
+        - TOXENV=py36
         - BREW_INSTALL=python3
+
+    # Python Codestyle
+    - os: linux
+      python: 3.6
+      env: CODESTYLE=true
 
 install:
   - |
@@ -53,11 +60,20 @@ install:
       fi
       sudo pip install tox
     fi
+    if [[ $CODESTYLE ]]; then
+      pip install pycodestyle
+    fi
 
 script:
   - |
     if [[ $TRAVIS_OS_NAME == 'linux' ]]; then
-      make
+      if [[ $CODESTYLE ]]; then
+        # 241 - multiple spaces after ‘,’
+        # 501 - line too long
+        pycodestyle --ignore=E241,E501
+      else
+        make
+      fi
     else
       PATH="/usr/local/bin:$PATH" tox -e "$TOXENV"
     fi

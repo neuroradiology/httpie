@@ -3,24 +3,27 @@
 NOTE: the CLI interface may change before reaching v1.0.
 
 """
-from textwrap import dedent, wrap
 # noinspection PyCompatibility
-from argparse import (RawDescriptionHelpFormatter, FileType,
-                      OPTIONAL, ZERO_OR_MORE, SUPPRESS)
+from argparse import (
+    RawDescriptionHelpFormatter, FileType,
+    OPTIONAL, ZERO_OR_MORE, SUPPRESS
+)
+from textwrap import dedent, wrap
 
 from httpie import __doc__, __version__
-from httpie.plugins.builtin import BuiltinAuthPlugin
+from httpie.input import (
+    HTTPieArgumentParser, KeyValueArgType,
+    SEP_PROXY, SEP_GROUP_ALL_ITEMS,
+    OUT_REQ_HEAD, OUT_REQ_BODY, OUT_RESP_HEAD,
+    OUT_RESP_BODY, OUTPUT_OPTIONS,
+    OUTPUT_OPTIONS_DEFAULT, PRETTY_MAP,
+    PRETTY_STDOUT_TTY_ONLY, SessionNameValidator,
+    readable_file_arg, SSL_VERSION_ARG_MAPPING
+)
+from httpie.output.formatters.colors import AVAILABLE_STYLES, DEFAULT_STYLE, PRESET_STYLE
 from httpie.plugins import plugin_manager
+from httpie.plugins.builtin import BuiltinAuthPlugin
 from httpie.sessions import DEFAULT_SESSIONS_DIR
-from httpie.output.formatters.colors import AVAILABLE_STYLES, DEFAULT_STYLE
-from httpie.input import (HTTPieArgumentParser,
-                          AuthCredentialsArgType, KeyValueArgType,
-                          SEP_PROXY, SEP_CREDENTIALS, SEP_GROUP_ALL_ITEMS,
-                          OUT_REQ_HEAD, OUT_REQ_BODY, OUT_RESP_HEAD,
-                          OUT_RESP_BODY, OUTPUT_OPTIONS,
-                          OUTPUT_OPTIONS_DEFAULT, PRETTY_MAP,
-                          PRETTY_STDOUT_TTY_ONLY, SessionNameValidator,
-                          readable_file_arg, SSL_VERSION_ARG_MAPPING)
 
 
 class HTTPieHelpFormatter(RawDescriptionHelpFormatter):
@@ -41,6 +44,7 @@ class HTTPieHelpFormatter(RawDescriptionHelpFormatter):
         text = dedent(text).strip() + '\n\n'
         return text.splitlines()
 
+
 parser = HTTPieArgumentParser(
     formatter_class=HTTPieHelpFormatter,
     description='%s <http://httpie.org>' % __doc__.strip(),
@@ -50,7 +54,7 @@ parser = HTTPieArgumentParser(
 
     Suggestions and bug reports are greatly appreciated:
 
-        https://github.com/jkbrzt/httpie/issues
+        https://github.com/jakubroztocil/httpie/issues
 
     """),
 )
@@ -89,6 +93,7 @@ positional.add_argument(
     metavar='URL',
     help="""
     The scheme defaults to 'http://' if the URL does not include one.
+    (You can override this with: --default-scheme=https)
 
     You can also use a shorthand for localhost
 
@@ -101,6 +106,7 @@ positional.add_argument(
     'items',
     metavar='REQUEST_ITEM',
     nargs=ZERO_OR_MORE,
+    default=None,
     type=KeyValueArgType(*SEP_GROUP_ALL_ITEMS),
     help=r"""
     Optional key-value pairs to be included in the request. The separator used
@@ -212,7 +218,7 @@ output_processing.add_argument(
     """.format(
         default=DEFAULT_STYLE,
         available='\n'.join(
-            '{0}{1}'.format(8*' ', line.strip())
+            '{0}{1}'.format(8 * ' ', line.strip())
             for line in wrap(', '.join(sorted(AVAILABLE_STYLES)), 60)
         ).rstrip(),
     )
@@ -298,8 +304,8 @@ output_options.add_argument(
     """
 )
 output_options.add_argument(
-    '--print-others', '-P',
-    dest='output_options_others',
+    '--history-print', '-P',
+    dest='output_options_history',
     metavar='WHAT',
     help="""
     The same as --print, -p but applies only to intermediary requests/responses
@@ -412,8 +418,8 @@ sessions.add_argument(
 auth = parser.add_argument_group(title='Authentication')
 auth.add_argument(
     '--auth', '-a',
+    default=None,
     metavar='USER[:PASS]',
-    type=AuthCredentialsArgType(SEP_CREDENTIALS),
     help="""
     If only the username is provided (-a username), HTTPie will prompt
     for the password.
@@ -421,11 +427,22 @@ auth.add_argument(
     """,
 )
 
+
+class _AuthTypeLazyChoices(object):
+    # Needed for plugin testing
+
+    def __contains__(self, item):
+        return item in plugin_manager.get_auth_plugin_mapping()
+
+    def __iter__(self):
+        return iter(sorted(plugin_manager.get_auth_plugin_mapping().keys()))
+
+
 _auth_plugins = plugin_manager.get_auth_plugins()
 auth.add_argument(
     '--auth-type', '-A',
-    choices=[plugin.auth_type for plugin in _auth_plugins],
-    default=_auth_plugins[0].auth_type,
+    choices=_AuthTypeLazyChoices(),
+    default=None,
     help="""
     The authentication mechanism to be used. Defaults to "{default}".
 
@@ -527,10 +544,10 @@ ssl.add_argument(
     '--verify',
     default='yes',
     help="""
-    Set to "no" to skip checking the host's SSL certificate. You can also pass
-    the path to a CA_BUNDLE file for private certs. You can also set the
-    REQUESTS_CA_BUNDLE environment variable. Defaults to "yes".
-
+    Set to "no" (or "false") to skip checking the host's SSL certificate.
+    Defaults to "yes" ("true"). You can also pass the path to a CA_BUNDLE file
+    for private certs. (Or you can set the REQUESTS_CA_BUNDLE environment
+    variable instead.)
     """
 )
 ssl.add_argument(
@@ -576,7 +593,7 @@ ssl.add_argument(
 troubleshooting = parser.add_argument_group(title='Troubleshooting')
 
 troubleshooting.add_argument(
-    '--ignore-stdin',
+    '--ignore-stdin', '-I',
     action='store_true',
     default=False,
     help="""
@@ -608,6 +625,14 @@ troubleshooting.add_argument(
     default=False,
     help="""
     Prints the exception traceback should one occur.
+
+    """
+)
+troubleshooting.add_argument(
+    '--default-scheme',
+    default="http",
+    help="""
+    The default scheme to use if not specified in the URL.
 
     """
 )

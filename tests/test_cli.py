@@ -10,7 +10,7 @@ from httpie import input
 from httpie.input import KeyValue, KeyValueArgType, DataDict
 from httpie import ExitStatus
 from httpie.cli import parser
-from utils import TestEnvironment, http, HTTP_OK
+from utils import MockEnvironment, http, HTTP_OK
 from fixtures import (
     FILE_PATH_ARG, JSON_FILE_PATH_ARG,
     JSON_FILE_CONTENT, FILE_CONTENT, FILE_PATH
@@ -68,10 +68,11 @@ class TestItemParsing:
     def test_valid_items(self):
         items = input.parse_items([
             self.key_value('string=value'),
-            self.key_value('header:value'),
+            self.key_value('Header:value'),
+            self.key_value('Unset-Header:'),
+            self.key_value('Empty-Header;'),
             self.key_value('list:=["a", 1, {}, false]'),
             self.key_value('obj:={"a": "b"}'),
-            self.key_value('eh:'),
             self.key_value('ed='),
             self.key_value('bool:=true'),
             self.key_value('file@' + FILE_PATH_ARG),
@@ -83,7 +84,11 @@ class TestItemParsing:
         # Parsed headers
         # `requests.structures.CaseInsensitiveDict` => `dict`
         headers = dict(items.headers._store.values())
-        assert headers == {'header': 'value', 'eh': ''}
+        assert headers == {
+            'Header': 'value',
+            'Unset-Header': None,
+            'Empty-Header': ''
+        }
 
         # Parsed data
         raw_json_embed = items.data.pop('raw-json-embed')
@@ -103,8 +108,8 @@ class TestItemParsing:
 
         # Parsed file fields
         assert 'file' in items.files
-        assert (items.files['file'][1].read().strip().decode('utf8')
-                == FILE_CONTENT)
+        assert (items.files['file'][1].read().strip().
+                decode('utf8') == FILE_CONTENT)
 
     def test_multiple_file_fields_with_same_field_name(self):
         items = input.parse_items([
@@ -156,44 +161,44 @@ class TestQuerystring:
 
 class TestLocalhostShorthand:
     def test_expand_localhost_shorthand(self):
-        args = parser.parse_args(args=[':'], env=TestEnvironment())
+        args = parser.parse_args(args=[':'], env=MockEnvironment())
         assert args.url == 'http://localhost'
 
     def test_expand_localhost_shorthand_with_slash(self):
-        args = parser.parse_args(args=[':/'], env=TestEnvironment())
+        args = parser.parse_args(args=[':/'], env=MockEnvironment())
         assert args.url == 'http://localhost/'
 
     def test_expand_localhost_shorthand_with_port(self):
-        args = parser.parse_args(args=[':3000'], env=TestEnvironment())
+        args = parser.parse_args(args=[':3000'], env=MockEnvironment())
         assert args.url == 'http://localhost:3000'
 
     def test_expand_localhost_shorthand_with_path(self):
-        args = parser.parse_args(args=[':/path'], env=TestEnvironment())
+        args = parser.parse_args(args=[':/path'], env=MockEnvironment())
         assert args.url == 'http://localhost/path'
 
     def test_expand_localhost_shorthand_with_port_and_slash(self):
-        args = parser.parse_args(args=[':3000/'], env=TestEnvironment())
+        args = parser.parse_args(args=[':3000/'], env=MockEnvironment())
         assert args.url == 'http://localhost:3000/'
 
     def test_expand_localhost_shorthand_with_port_and_path(self):
-        args = parser.parse_args(args=[':3000/path'], env=TestEnvironment())
+        args = parser.parse_args(args=[':3000/path'], env=MockEnvironment())
         assert args.url == 'http://localhost:3000/path'
 
     def test_dont_expand_shorthand_ipv6_as_shorthand(self):
-        args = parser.parse_args(args=['::1'], env=TestEnvironment())
+        args = parser.parse_args(args=['::1'], env=MockEnvironment())
         assert args.url == 'http://::1'
 
     def test_dont_expand_longer_ipv6_as_shorthand(self):
         args = parser.parse_args(
             args=['::ffff:c000:0280'],
-            env=TestEnvironment()
+            env=MockEnvironment()
         )
         assert args.url == 'http://::ffff:c000:0280'
 
     def test_dont_expand_full_ipv6_as_shorthand(self):
         args = parser.parse_args(
             args=['0000:0000:0000:0000:0000:0000:0000:0001'],
-            env=TestEnvironment()
+            env=MockEnvironment()
         )
         assert args.url == 'http://0000:0000:0000:0000:0000:0000:0000:0001'
 
@@ -210,7 +215,7 @@ class TestArgumentParser:
         self.parser.args.items = []
         self.parser.args.ignore_stdin = False
 
-        self.parser.env = TestEnvironment()
+        self.parser.env = MockEnvironment()
 
         self.parser._guess_method()
 
@@ -224,7 +229,7 @@ class TestArgumentParser:
         self.parser.args.url = 'http://example.com/'
         self.parser.args.items = []
         self.parser.args.ignore_stdin = False
-        self.parser.env = TestEnvironment()
+        self.parser.env = MockEnvironment()
 
         self.parser._guess_method()
 
@@ -238,7 +243,7 @@ class TestArgumentParser:
         self.parser.args.url = 'data=field'
         self.parser.args.items = []
         self.parser.args.ignore_stdin = False
-        self.parser.env = TestEnvironment()
+        self.parser.env = MockEnvironment()
         self.parser._guess_method()
 
         assert self.parser.args.method == 'POST'
@@ -257,7 +262,7 @@ class TestArgumentParser:
         self.parser.args.items = []
         self.parser.args.ignore_stdin = False
 
-        self.parser.env = TestEnvironment()
+        self.parser.env = MockEnvironment()
 
         self.parser._guess_method()
 
@@ -280,7 +285,7 @@ class TestArgumentParser:
         ]
         self.parser.args.ignore_stdin = False
 
-        self.parser.env = TestEnvironment()
+        self.parser.env = MockEnvironment()
 
         self.parser._guess_method()
 
@@ -309,7 +314,7 @@ class TestIgnoreStdin:
 
     def test_ignore_stdin(self, httpbin):
         with open(FILE_PATH) as f:
-            env = TestEnvironment(stdin=f, stdin_isatty=False)
+            env = MockEnvironment(stdin=f, stdin_isatty=False)
             r = http('--ignore-stdin', '--verbose', httpbin.url + '/get',
                      env=env)
         assert HTTP_OK in r
@@ -325,8 +330,18 @@ class TestIgnoreStdin:
 
 class TestSchemes:
 
-    def test_custom_scheme(self):
+    def test_invalid_custom_scheme(self):
         # InvalidSchema is expected because HTTPie
         # shouldn't touch a formally valid scheme.
         with pytest.raises(InvalidSchema):
             http('foo+bar-BAZ.123://bah')
+
+    def test_invalid_scheme_via_via_default_scheme(self):
+        # InvalidSchema is expected because HTTPie
+        # shouldn't touch a formally valid scheme.
+        with pytest.raises(InvalidSchema):
+            http('bah', '--default=scheme=foo+bar-BAZ.123')
+
+    def test_default_scheme(self, httpbin_secure):
+        url = '{0}:{1}'.format(httpbin_secure.host, httpbin_secure.port)
+        assert HTTP_OK in http(url, '--default-scheme=https')

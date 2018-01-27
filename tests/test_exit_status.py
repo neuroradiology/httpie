@@ -1,9 +1,25 @@
+import mock
+
 from httpie import ExitStatus
-from utils import TestEnvironment, http, HTTP_OK
+from utils import MockEnvironment, http, HTTP_OK
+
+
+def test_keyboard_interrupt_during_arg_parsing_exit_status(httpbin):
+    with mock.patch('httpie.cli.parser.parse_args',
+                    side_effect=KeyboardInterrupt()):
+        r = http('GET', httpbin.url + '/get', error_exit_ok=True)
+        assert r.exit_status == ExitStatus.ERROR_CTRL_C
+
+
+def test_keyboard_interrupt_in_program_exit_status(httpbin):
+    with mock.patch('httpie.core.program',
+                    side_effect=KeyboardInterrupt()):
+        r = http('GET', httpbin.url + '/get', error_exit_ok=True)
+        assert r.exit_status == ExitStatus.ERROR_CTRL_C
 
 
 def test_ok_response_exits_0(httpbin):
-    r = http('GET', httpbin.url + '/status/200')
+    r = http('GET', httpbin.url + '/get')
     assert HTTP_OK in r
     assert r.exit_status == ExitStatus.OK
 
@@ -24,7 +40,7 @@ def test_timeout_exit_status(httpbin):
 
 def test_3xx_check_status_exits_3_and_stderr_when_stdout_redirected(
         httpbin):
-    env = TestEnvironment(stdout_isatty=False)
+    env = MockEnvironment(stdout_isatty=False)
     r = http('--check-status', '--headers',
              'GET', httpbin.url + '/status/301',
              env=env, error_exit_ok=True)

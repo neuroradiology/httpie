@@ -32,7 +32,7 @@ it.
 Creating Development Environment
 --------------------------------
 
-Go to https://github.com/jkbrzt/httpie and fork the project repository.
+Go to https://github.com/jakubroztocil/httpie and fork the project repository.
 
 
 .. code-block:: bash
@@ -47,7 +47,7 @@ Go to https://github.com/jkbrzt/httpie and fork the project repository.
 
     # Install dev. requirements and also HTTPie (in editable mode
     # so that the `http' command will point to your working copy):
-    make
+    make init
 
 
 Making Changes
@@ -71,11 +71,8 @@ Running all tests:
 
 .. code-block:: bash
 
-    # Run all tests on the current Python interpreter
+    # Run all tests on the current Python interpreter with coverage
     make test
-
-    # Run all tests on the current Python with coverage
-    make test-cover
 
     # Run all tests in all of the supported and available Pythons via Tox
     make test-tox
@@ -107,10 +104,10 @@ Don't forget to add yourself to `AUTHORS`_!
 
 
 .. _Tox: http://tox.testrun.org
-.. _supported Python environments: https://github.com/jkbrzt/httpie/blob/master/tox.ini
-.. _existing issues: https://github.com/jkbrzt/httpie/issues?state=open
-.. _AUTHORS: https://github.com/jkbrzt/httpie/blob/master/AUTHORS.rst
-.. _Makefile: https://github.com/jkbrzt/httpie/blob/master/Makefile
+.. _supported Python environments: https://github.com/jakubroztocil/httpie/blob/master/tox.ini
+.. _existing issues: https://github.com/jakubroztocil/httpie/issues?state=open
+.. _AUTHORS: https://github.com/jakubroztocil/httpie/blob/master/AUTHORS.rst
+.. _Makefile: https://github.com/jakubroztocil/httpie/blob/master/Makefile
 .. _pytest: http://pytest.org/
 .. _Style Guide for Python Code: http://python.org/dev/peps/pep-0008/
-.. _test suite: https://github.com/jkbrzt/httpie/tree/master/tests
+.. _test suite: https://github.com/jakubroztocil/httpie/tree/master/tests

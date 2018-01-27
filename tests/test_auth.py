@@ -2,7 +2,7 @@
 import mock
 import pytest
 
-from utils import http, add_auth, HTTP_OK, TestEnvironment
+from utils import http, add_auth, HTTP_OK, MockEnvironment
 import httpie.input
 import httpie.cli
 
@@ -55,10 +55,21 @@ def test_credentials_in_url_auth_flag_has_priority(httpbin_both):
 ])
 def test_only_username_in_url(url):
     """
-    https://github.com/jkbrzt/httpie/issues/242
+    https://github.com/jakubroztocil/httpie/issues/242
 
     """
-    args = httpie.cli.parser.parse_args(args=[url], env=TestEnvironment())
+    args = httpie.cli.parser.parse_args(args=[url], env=MockEnvironment())
     assert args.auth
-    assert args.auth.key == 'username'
-    assert args.auth.value == ''
+    assert args.auth.username == 'username'
+    assert args.auth.password == ''
+
+
+def test_missing_auth(httpbin):
+    r = http(
+        '--auth-type=basic',
+        'GET',
+        httpbin + '/basic-auth/user/password',
+        error_exit_ok=True
+    )
+    assert HTTP_OK not in r
+    assert '--auth required' in r.stderr

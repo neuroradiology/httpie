@@ -24,6 +24,9 @@ class PluginManager(object):
         for plugin in plugins:
             self._plugins.append(plugin)
 
+    def unregister(self, plugin):
+        self._plugins.remove(plugin)
+
     def load_installed_plugins(self):
         for entry_point_name in ENTRY_POINT_NAMES:
             for entry_point in iter_entry_points(entry_point_name):
@@ -36,8 +39,7 @@ class PluginManager(object):
         return [plugin for plugin in self if issubclass(plugin, AuthPlugin)]
 
     def get_auth_plugin_mapping(self):
-        return dict((plugin.auth_type, plugin)
-                    for plugin in self.get_auth_plugins())
+        return {plugin.auth_type: plugin for plugin in self.get_auth_plugins()}
 
     def get_auth_plugin(self, auth_type):
         return self.get_auth_plugin_mapping()[auth_type]
